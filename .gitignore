@@ -1,0 +1,60 @@
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+*.log
+hs_err_pid*
+replay_pid*
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node / Web
+web/node_modules/
+web/dist/
+web/.vite/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Logs
+logs/
+*.log
+*.out
+
+# Temp files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Environment variables
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Docker
+docker-compose.override.yml
+
+# FFmpeg crash logs
+ffcrash*
+
+.claude/settings.local.json
