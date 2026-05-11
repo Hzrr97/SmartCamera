@@ -1,14 +1,27 @@
+# 开发环境配置
+
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/smart_camera?useSSL=false&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/smart_camera?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&createDatabaseIfNotExist=true
     username: root
-    password: root
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: true
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+camera:
+  ffmpeg:
+    device:
+      linux: /dev/video0
+      windows: "USB Camera"
+
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket: streams
 
 logging:
   level:
     com.smartcamera: DEBUG
     io.netty: DEBUG
+  file:
+    name: logs/smart-camera-dev.log

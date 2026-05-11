@@ -22,9 +22,9 @@ public class CameraProperties {
     @Data
     public static class Ffmpeg {
         private String path = "ffmpeg";
-        private int framerate = 25;
-        private String resolution = "1920x1080";
-        private int bitrateKbps = 2000;
+        private int framerate = 30;
+        private String resolution = "640x480";
+        private int bitrateKbps = 1500;
         private String preset = "ultrafast";
         private Device device = new Device();
         private boolean autoRetry = true;

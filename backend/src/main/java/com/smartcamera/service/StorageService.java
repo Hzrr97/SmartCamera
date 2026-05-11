@@ -3,24 +3,19 @@ package com.smartcamera.service;
 import com.smartcamera.config.MinioConfig;
 import com.smartcamera.entity.VideoSegment;
 import com.smartcamera.repository.VideoSegmentRepository;
-import io.minio.GetObjectArgs;
+import io.minio.GetPresignedObjectUrlArgs;
+import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
-import io.minio.StatObjectArgs;
-import io.minio.errors.*;
 import io.minio.http.Method;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.io.ByteArrayInputStream;
 import java.io.FileInputStream;
-import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class StorageService {
 
+    private final MinioClient minioClient;
     private final MinioConfig minioConfig;
     private final VideoSegmentRepository segmentRepository;
 
@@ -49,7 +45,7 @@ public class StorageService {
             long fileSize = Files.size(localFilePath);
 
             try (FileInputStream fis = new FileInputStream(localFilePath.toFile())) {
-                minioConfig.getMinioClient().putObject(
+                minioClient.putObject(
                         PutObjectArgs.builder()
                                 .bucket(minioConfig.getBucket())
                                 .object(objectName)
@@ -87,12 +83,13 @@ public class StorageService {
      */
     public String getSegmentUrl(String objectName, int expiryMinutes) {
         try {
-            return minioConfig.getMinioClient().getPresignedObjectUrl(
-                    GetObjectArgs.builder()
+            return minioClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()
                             .bucket(minioConfig.getBucket())
                             .object(objectName)
-                            .build(),
-                    expiryMinutes, TimeUnit.MINUTES);
+                            .method(Method.GET)
+                            .expiry(expiryMinutes, TimeUnit.MINUTES)
+                            .build());
         } catch (Exception e) {
             log.error("Failed to generate presigned URL for {}: {}", objectName, e.getMessage(), e);
             return null;
@@ -107,7 +104,7 @@ public class StorageService {
         if (segment == null) return;
 
         try {
-            minioConfig.getMinioClient().removeObject(
+            minioClient.removeObject(
                     RemoveObjectArgs.builder()
                             .bucket(segment.getBucketName())
                             .object(segment.getFilePath())
@@ -128,7 +125,7 @@ public class StorageService {
 
         for (VideoSegment segment : expired) {
             try {
-                minioConfig.getMinioClient().removeObject(
+                minioClient.removeObject(
                         RemoveObjectArgs.builder()
                                 .bucket(segment.getBucketName())
                                 .object(segment.getFilePath())

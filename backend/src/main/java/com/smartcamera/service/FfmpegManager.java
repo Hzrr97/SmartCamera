@@ -3,6 +3,7 @@ package com.smartcamera.service;
 import com.smartcamera.config.CameraProperties;
 import com.smartcamera.entity.CameraConfig;
 import com.smartcamera.repository.CameraConfigRepository;
+import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -32,8 +33,27 @@ public class FfmpegManager {
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, FfmpegProcessContext> contexts = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
+    private volatile boolean shuttingDown = false;
+
+    @PostConstruct
+    public void init() {
+        // JVM shutdown hook: force-kill all FFmpeg processes even on abrupt JVM exit
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            log.info("Shutdown hook: force-killing all FFmpeg processes...");
+            processes.values().forEach(p -> {
+                if (p.isAlive()) {
+                    p.destroyForcibly();
+                }
+            });
+            scheduler.shutdownNow();
+        }, "ffmpeg-shutdown-hook"));
+    }
 
     public synchronized void start(String cameraId) {
+        if (shuttingDown) {
+            log.warn("Rejecting start for camera {} — manager is shutting down", cameraId);
+            return;
+        }
         if (processes.containsKey(cameraId)) {
             log.warn("FFmpeg process already running for camera: {}", cameraId);
             return;
@@ -43,7 +63,11 @@ public class FfmpegManager {
                 .orElseThrow(() -> new RuntimeException("Camera not found: " + cameraId));
 
         String devicePath = config.getDevicePath() != null ? config.getDevicePath() : commandBuilder.getDevicePath();
-        List<String> command = commandBuilder.buildPushCommand(cameraId, devicePath);
+        List<String> command = commandBuilder.buildPushCommand(
+                cameraId, devicePath,
+                config.getFramerate(),
+                config.getResolution(),
+                config.getBitrateKbps());
 
         try {
             ProcessBuilder pb = new ProcessBuilder(command);
@@ -162,13 +186,14 @@ public class FfmpegManager {
     @PreDestroy
     public void shutdown() {
         log.info("Shutting down all FFmpeg processes...");
-        processes.keySet().forEach(this::stop);
-        scheduler.shutdown();
-        try {
-            scheduler.awaitTermination(10, TimeUnit.SECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
+        shuttingDown = true;
+        // Force-kill immediately to release camera device on Windows
+        processes.values().forEach(p -> {
+            if (p.isAlive()) {
+                p.destroyForcibly();
+            }
+        });
+        scheduler.shutdownNow();
     }
 
     @lombok.Data

@@ -1,53 +1,50 @@
 package com.smartcamera.entity;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.Data;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDateTime;
 
 @Data
-@Entity
-@Table(name = "camera_config")
+@TableName("camera_config")
 public class CameraConfig {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "camera_id", unique = true, nullable = false, length = 64)
+    @TableField("camera_id")
     private String cameraId;
 
-    @Column(name = "camera_name", nullable = false, length = 128)
+    @TableField("camera_name")
     private String cameraName;
 
-    @Column(name = "device_path", length = 256)
+    @TableField("device_path")
     private String devicePath;
 
-    @Column(name = "resolution", length = 16)
+    @TableField("resolution")
     private String resolution = "1920x1080";
 
-    @Column(name = "framerate")
+    @TableField("framerate")
     private Integer framerate = 25;
 
-    @Column(name = "bitrate_kbps")
+    @TableField("bitrate_kbps")
     private Integer bitrateKbps = 2000;
 
-    @Column(name = "rtsp_port")
+    @TableField("rtsp_port")
     private Integer rtspPort = 8554;
 
-    @Column(name = "enabled")
+    @TableField("enabled")
     private Boolean enabled = true;
 
-    @Column(name = "status", length = 16)
+    @TableField("status")
     private String status = "OFFLINE";
 
-    @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @TableField("created_at")
     private LocalDateTime createdAt;
 
-    @UpdateTimestamp
-    @Column(name = "updated_at")
+    @TableField("updated_at")
     private LocalDateTime updatedAt;
 }

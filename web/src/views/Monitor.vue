@@ -9,11 +9,6 @@
           :value="cam.cameraId"
         />
       </el-select>
-      <el-select v-model="resolution" placeholder="分辨率" style="width: 140px;">
-        <el-option label="1920x1080" value="1920x1080" />
-        <el-option label="1280x720" value="1280x720" />
-        <el-option label="640x480" value="640x480" />
-      </el-select>
       <el-button type="primary" @click="startPreview">
         <el-icon><VideoPlay /></el-icon> 开始预览
       </el-button>
@@ -39,9 +34,8 @@
       </div>
 
       <!-- Status overlay -->
-      <div v-if="isPlaying" class="status-overlay">
+      <div v-if="streamUrl" class="status-overlay">
         <el-tag type="success" size="small">在线</el-tag>
-        <span class="status-text">{{ resolution }} | 25fps</span>
       </div>
     </div>
 
@@ -58,9 +52,7 @@ import { ElMessage } from 'element-plus'
 
 const cameras = ref([])
 const selectedCamera = ref('')
-const resolution = ref('1920x1080')
 const streamUrl = ref('')
-const isPlaying = ref(false)
 const canvasRef = ref(null)
 
 onMounted(async () => {
@@ -80,12 +72,10 @@ function startPreview() {
     return
   }
   streamUrl.value = `/api/v1/streams/${selectedCamera.value}/live.flv`
-  isPlaying.value = true
 }
 
 function stopPreview() {
   streamUrl.value = ''
-  isPlaying.value = false
 }
 
 function onLoaded() {
@@ -173,13 +163,5 @@ function takeSnapshot() {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.status-text {
-  color: #fff;
-  font-size: 12px;
-  background: rgba(0, 0, 0, 0.5);
-  padding: 2px 8px;
-  border-radius: 4px;
 }
 </style>

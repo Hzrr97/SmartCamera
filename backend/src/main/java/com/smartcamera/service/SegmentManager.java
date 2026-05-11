@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PreDestroy;
+import jakarta.annotation.PreDestroy;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -107,7 +107,7 @@ public class SegmentManager {
     }
 
     private void checkRotation(SegmentContext ctx) {
-        boolean timeExpired = System.currentTimeMillis() - ctx.getStartTime().toInstant(java.time.ZoneId.systemDefault()).toEpochMilli()
+        boolean timeExpired = System.currentTimeMillis() - ctx.getStartTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
                 > ctx.getDurationMs();
         boolean sizeExpired = ctx.getBytesWritten() >= ctx.getMaxSizeBytes();
 

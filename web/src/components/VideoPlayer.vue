@@ -11,7 +11,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import flvjs from 'flv.js'
+import mpegts from 'mpegts.js'
 
 const props = defineProps({
   src: { type: String, required: true },
@@ -39,7 +39,7 @@ watch(() => props.src, () => {
 })
 
 function initPlayer() {
-  if (!flvjs.isSupported()) {
+  if (!mpegts.isSupported()) {
     error.value = '当前浏览器不支持 FLV 播放'
     loading.value = false
     emit('error', error.value)
@@ -49,33 +49,77 @@ function initPlayer() {
   loading.value = true
   error.value = ''
 
-  try {
-    player = flvjs.createPlayer(
-      { type: 'flv', url: props.src },
-      {
-        enableWorker: true,
-        enableStashBuffer: false,
-        stashInitialSize: 128,
-        isLive: true
-      }
-    )
+  console.log('[VideoPlayer] Initializing player, src:', props.src)
+  console.log('[VideoPlayer] mpegts.isSupported:', mpegts.isSupported())
 
-    player.attachMediaElement(videoRef.value)
-    player.load()
-    player.play().then(() => {
-      loading.value = false
-      emit('loaded')
-    }).catch(e => {
-      error.value = '播放失败: ' + e.message
-      loading.value = false
-      emit('error', e.message)
+  try {
+    player = mpegts.createPlayer({
+      type: 'flv',
+      url: props.src,
+      isLive: true,
+      hasAudio: false
+    }, {
+      enableWorker: false,
+      enableStashBuffer: false,
+      stashInitialSize: 128,
+      lazyLoad: false,
+      liveBufferLatencyChasing: true,
+      // Enable debug logging
+      debug: true
     })
 
-    player.on(flvjs.Events.ERROR, (errType, errDetail) => {
+    // Log video element events
+    const video = videoRef.value
+    video.addEventListener('error', (e) => {
+      console.error('[VideoPlayer] video element error:', video.error)
+    })
+    video.addEventListener('loadeddata', () => console.log('[VideoPlayer] loadeddata'))
+    video.addEventListener('loadedmetadata', () => console.log('[VideoPlayer] loadedmetadata'))
+    video.addEventListener('playing', () => console.log('[VideoPlayer] playing'))
+    video.addEventListener('waiting', () => console.log('[VideoPlayer] waiting'))
+    video.addEventListener('canplay', () => console.log('[VideoPlayer] canplay'))
+
+    player.on(mpegts.Events.MEDIA_INFO, (info) => {
+      console.log('[VideoPlayer] MEDIA_INFO:', JSON.stringify(info))
+      loading.value = false
+      emit('loaded')
+    })
+
+    player.on(mpegts.Events.MEDIA_SEGMENT, () => {
+      console.log('[VideoPlayer] MEDIA_SEGMENT')
+      if (loading.value) {
+        loading.value = false
+        emit('loaded')
+      }
+    })
+
+    player.on(mpegts.Events.LOADING_COMPLETE, () => {
+      console.log('[VideoPlayer] LOADING_COMPLETE')
+      loading.value = false
+      emit('loaded')
+    })
+
+    player.on(mpegts.Events.ERROR, (errType, errDetail) => {
+      console.error('[VideoPlayer] ERROR:', errType, errDetail)
       error.value = `播放错误: ${errType} - ${errDetail}`
       loading.value = false
       emit('error', error.value)
     })
+
+    player.on(mpegts.Events.RECOVERED_ERROR, (errType, errDetail) => {
+      console.warn('[VideoPlayer] recovered from error:', errType, errDetail)
+    })
+
+    // Attach media and load
+    player.attachMediaElement(videoRef.value)
+    console.log('[VideoPlayer] Calling load()...')
+    player.load()
+
+    if (props.autoplay) {
+      player.play().catch(e => {
+        console.warn('[VideoPlayer] 自动播放被阻止:', e.message)
+      })
+    }
   } catch (e) {
     error.value = '播放器初始化失败: ' + e.message
     loading.value = false

@@ -1,54 +1,50 @@
 package com.smartcamera.entity;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.TableField;
 import lombok.Data;
-import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
 
 @Data
-@Entity
-@Table(name = "video_segment", indexes = {
-        @Index(name = "idx_camera_time", columnList = "camera_id, start_time, end_time"),
-        @Index(name = "idx_expired", columnList = "expired_at")
-})
+@TableName("video_segment")
 public class VideoSegment {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "camera_id", nullable = false, length = 64)
+    @TableField("camera_id")
     private String cameraId;
 
-    @Column(name = "file_path", nullable = false, length = 512)
+    @TableField("file_path")
     private String filePath;
 
-    @Column(name = "bucket_name", nullable = false, length = 128)
+    @TableField("bucket_name")
     private String bucketName = "streams";
 
-    @Column(name = "start_time", nullable = false)
+    @TableField("start_time")
     private LocalDateTime startTime;
 
-    @Column(name = "end_time", nullable = false)
+    @TableField("end_time")
     private LocalDateTime endTime;
 
-    @Column(name = "duration_ms", nullable = false)
+    @TableField("duration_ms")
     private Integer durationMs;
 
-    @Column(name = "file_size", nullable = false)
+    @TableField("file_size")
     private Long fileSize;
 
-    @Column(name = "resolution", length = 16)
+    @TableField("resolution")
     private String resolution;
 
-    @Column(name = "codec", length = 16)
+    @TableField("codec")
     private String codec = "h264";
 
-    @Column(name = "expired_at")
+    @TableField("expired_at")
     private LocalDateTime expiredAt;
 
-    @CreationTimestamp
-    @Column(name = "created_at", updatable = false)
+    @TableField("created_at")
     private LocalDateTime createdAt;
 }

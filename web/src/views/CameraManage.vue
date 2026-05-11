@@ -23,14 +23,14 @@
       </el-table-column>
       <el-table-column label="操作" fixed="right" width="220">
         <template #default="{ row }">
-          <el-button size="small" type="success" @click="startStream(row)" v-if="row.status !== 'ONLINE'">
+          <el-button size="small" type="success" @click="btnStartStream(row)" v-if="row.status !== 'ONLINE'">
             启动
           </el-button>
-          <el-button size="small" type="danger" @click="stopStream(row)" v-else>
+          <el-button size="small" type="danger" @click="btnStopStream(row)" v-else>
             停止
           </el-button>
           <el-button size="small" @click="editCamera(row)">编辑</el-button>
-          <el-popconfirm title="确认删除该摄像头？" @confirm="deleteCamera(row.id)">
+          <el-popconfirm title="确认删除该摄像头？" @confirm="confirmDeleteCamera(row.id)">
             <template #reference>
               <el-button size="small" type="danger">删除</el-button>
             </template>
@@ -149,7 +149,7 @@ async function saveCamera() {
   }
 }
 
-async function deleteCamera(id) {
+async function confirmDeleteCamera(id) {
   try {
     await deleteCamera(id)
     ElMessage.success('删除成功')
@@ -159,7 +159,7 @@ async function deleteCamera(id) {
   }
 }
 
-async function startStream(row) {
+async function btnStartStream(row) {
   try {
     await startStream(row.id)
     ElMessage.success('推流已启动')
@@ -169,7 +169,7 @@ async function startStream(row) {
   }
 }
 
-async function stopStream(row) {
+async function btnStopStream(row) {
   try {
     await stopStream(row.id)
     ElMessage.success('推流已停止')

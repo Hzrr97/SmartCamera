@@ -2,10 +2,13 @@ package com.smartcamera.netty;
 
 import com.smartcamera.config.CameraProperties;
 import com.smartcamera.config.NettyConfig;
+import com.smartcamera.service.FrameDistributor;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.channel.socket.nio.NioServerSocketChannel;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
@@ -20,6 +23,8 @@ public class RtspServer {
     private final EventLoopGroup bossGroup;
     private final EventLoopGroup workerGroup;
     private final CameraProperties properties;
+    private final RtpServer rtpServer;
+    private final FrameDistributor frameDistributor;
 
     private Channel channel;
 
@@ -28,12 +33,15 @@ public class RtspServer {
         int port = properties.getRtsp().getPort();
         log.info("Starting RTSP server on port {}", port);
 
+        // Set RtpServer reference for RTSP handler
+        RtspServerHandler.setRtpServer(rtpServer);
+
         Thread serverThread = new Thread(() -> {
             try {
                 ServerBootstrap bootstrap = new ServerBootstrap();
                 bootstrap.group(bossGroup, workerGroup)
-                        .channel(io.netty.channel.nio.NioServerSocketChannel.class)
-                        .childHandler(new RtspServerInitializer());
+                        .channel(NioServerSocketChannel.class)
+                        .childHandler(new RtspServerInitializer(frameDistributor));
 
                 ChannelFuture future = bootstrap.bind(port).sync();
                 channel = future.channel();
