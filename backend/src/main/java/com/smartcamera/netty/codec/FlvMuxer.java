@@ -13,14 +13,14 @@ public class FlvMuxer {
 
     private static final int FLV_TAG_TYPE_VIDEO = 0x09;
     private static final int FLV_TAG_TYPE_SCRIPT = 0x12;
-    private static final int FLV_TAG_TYPE_AUDIO = 0x08;
 
     private int previousTagSize = 0;
     private int timestamp = 0;
     private boolean headerWritten = false;
 
     // FLV header: "FLV" + version(1) + flags(1) + offset(4) = 9 bytes
-    private static final byte[] FLV_HEADER = {
+    // flags: 0x01 = video only
+    private static final byte[] FLV_HEADER_VIDEO_ONLY = {
             0x46, 0x4C, 0x56, // "FLV"
             0x01,              // version
             0x01,              // video only
@@ -32,7 +32,7 @@ public class FlvMuxer {
      */
     public byte[] getFlvHeader() {
         headerWritten = true;
-        return FLV_HEADER;
+        return FLV_HEADER_VIDEO_ONLY;
     }
 
     /**

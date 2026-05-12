@@ -87,9 +87,15 @@ public class RtspServerHandler extends SimpleChannelInboundHandler<FullHttpReque
 
     // Cached SPS/PPS per camera, extracted from ANNOUNCE SDP
     private static final Map<String, byte[][]> spsPpsCache = new ConcurrentHashMap<>();
+    // Cached audio payload type per camera, extracted from ANNOUNCE SDP
+    private static final Map<String, Integer> audioPayloadTypeCache = new ConcurrentHashMap<>();
 
     public static byte[][] getSpsPps(String cameraId) {
         return spsPpsCache.get(cameraId);
+    }
+
+    public static int getAudioPayloadType(String cameraId) {
+        return audioPayloadTypeCache.getOrDefault(cameraId, 97); // default 97 for AAC
     }
 
     private void handleAnnounce(ChannelHandlerContext ctx, FullHttpRequest request, int cseq) {
@@ -133,6 +139,28 @@ public class RtspServerHandler extends SimpleChannelInboundHandler<FullHttpReque
                             sps.length, pps.length, cameraId);
                 } catch (IllegalArgumentException e) {
                     log.error("Failed to decode SPS/PPS: {}", e.getMessage());
+                }
+            }
+        }
+
+        // Parse audio payload type from SDP (a=rtpmap:XX MPEG4-GENERIC or AAC)
+        String[] lines = sdpBody.split("\\r?\\n");
+        for (String line : lines) {
+            if (line.startsWith("a=rtpmap:")) {
+                String rtpmap = line.substring("a=rtpmap:".length());
+                int spaceIdx = rtpmap.indexOf(' ');
+                if (spaceIdx > 0) {
+                    String ptStr = rtpmap.substring(0, spaceIdx);
+                    String codec = rtpmap.substring(spaceIdx + 1).toUpperCase();
+                    if (codec.contains("MPEG4-GENERIC") || codec.contains("AAC") || codec.contains("MP4A")) {
+                        try {
+                            int audioPt = Integer.parseInt(ptStr);
+                            audioPayloadTypeCache.put(cameraId, audioPt);
+                            log.info("Detected audio payload type: {} (codec: {}) for camera {}", audioPt, codec, cameraId);
+                        } catch (NumberFormatException e) {
+                            log.warn("Failed to parse audio payload type: {}", ptStr);
+                        }
+                    }
                 }
             }
         }

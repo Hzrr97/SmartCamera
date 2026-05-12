@@ -63,9 +63,9 @@ function initPlayer() {
       enableStashBuffer: false,
       stashInitialSize: 128,
       lazyLoad: false,
-      liveBufferLatencyChasing: true,
-      // Enable debug logging
-      debug: true
+      liveSyncDurationCount: 1,
+      liveBufferLatencyChasing: false,
+      liveMaxLatencyDurationCount: 6
     })
 
     // Log video element events

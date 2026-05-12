@@ -42,4 +42,7 @@ public interface CameraConfigRepository extends BaseMapper<CameraConfig> {
 
     @Select("SELECT * FROM camera_config WHERE status = #{status}")
     List<CameraConfig> findByStatus(@Param("status") String status);
+
+    @Select("SELECT * FROM camera_config WHERE enabled = true")
+    List<CameraConfig> findByEnabledTrue();
 }

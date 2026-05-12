@@ -76,7 +76,7 @@ public class CameraController {
         CameraConfig config = cameraConfigRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Camera not found: " + id));
 
-        ffmpegManager.start(config.getCameraId());
+        ffmpegManager.start(config);
         return ResponseEntity.ok(Map.of("status", "starting", "cameraId", config.getCameraId()));
     }
 

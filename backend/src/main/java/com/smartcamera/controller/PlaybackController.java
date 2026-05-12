@@ -5,9 +5,11 @@ import com.smartcamera.model.dto.PlaybackQueryDTO;
 import com.smartcamera.model.vo.PlaybackResultVO;
 import com.smartcamera.service.PlaybackService;
 import com.smartcamera.service.StorageService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -78,5 +80,15 @@ public class PlaybackController {
             return ResponseEntity.ok(url);
         }
         return ResponseEntity.notFound().build();
+    }
+
+    /**
+     * Stream a single H.264 segment as MP4 directly to the browser.
+     * GET /api/v1/playback/stream/{segmentId}
+     * Converts H.264 to MP4 on-the-fly and streams via HTTP response.
+     */
+    @GetMapping(value = "/stream/{segmentId}")
+    public void streamSegmentAsMp4(@PathVariable Long segmentId, HttpServletResponse response) {
+        playbackService.streamSegmentAsMp4(segmentId, response);
     }
 }

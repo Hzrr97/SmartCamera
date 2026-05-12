@@ -1,7 +1,9 @@
 package com.smartcamera.controller;
 
+import com.smartcamera.entity.CameraConfig;
 import com.smartcamera.netty.codec.FlvMuxer;
 import com.smartcamera.netty.codec.H264Parser;
+import com.smartcamera.repository.CameraConfigRepository;
 import com.smartcamera.service.FrameDistributor;
 import com.smartcamera.service.FfmpegManager;
 import jakarta.servlet.http.HttpServletResponse;
@@ -20,11 +22,18 @@ import java.util.Map;
 @Slf4j
 @RestController
 @RequestMapping("/api/v1/streams")
-@RequiredArgsConstructor
 public class StreamController {
 
     private final FfmpegManager ffmpegManager;
     private final FrameDistributor frameDistributor;
+    private final CameraConfigRepository cameraConfigRepository;
+
+    public StreamController(FfmpegManager ffmpegManager, FrameDistributor frameDistributor,
+                            CameraConfigRepository cameraConfigRepository) {
+        this.ffmpegManager = ffmpegManager;
+        this.frameDistributor = frameDistributor;
+        this.cameraConfigRepository = cameraConfigRepository;
+    }
 
     @GetMapping(value = "/{cameraId}/live.flv", produces = "video/x-flv")
     public StreamingResponseBody streamFlv(@PathVariable String cameraId, HttpServletResponse response) {
@@ -40,10 +49,20 @@ public class StreamController {
             FlvMuxer flvMuxer = new FlvMuxer();
             final byte[][] spsHolder = new byte[1][];
             final byte[][] ppsHolder = new byte[1][];
-            final List<byte[]>[] bufferHolder = new List[]{new ArrayList<>()}; // 缓冲帧直到序列头就绪
 
-            // 1. 先建立订阅（确保不丢失帧）
-            String subscriptionId = frameDistributor.subscribe(cameraId, nalu -> {
+            // 1. 写 FLV header（无音频，纯视频）
+            outputStream.write(flvMuxer.getFlvHeader());
+            outputStream.write(new byte[]{0, 0, 0, 0}); // PreviousTagSize0
+            log.info("FLV header written for camera {}", cameraId);
+
+            // 写 onMetaData（仅视频）
+            byte[] metaTag = flvMuxer.getMetaDataTag(640, 480, 30.0);
+            outputStream.write(metaTag);
+            outputStream.flush();
+            log.info("FLV onMetaData written for camera {}", cameraId);
+
+            // 2. 建立视频订阅
+            String videoSubId = frameDistributor.subscribe(cameraId, nalu -> {
                 try {
                     int naluType = H264Parser.getNaluType(nalu);
                     if (naluType == 7) {
@@ -59,13 +78,11 @@ public class StreamController {
                         return;
                     }
 
-                    // 只允许 IDR (5) 和 P-frame (1) 写入 FLV
                     if (naluType != 1 && naluType != 5) {
                         log.debug("Skipping unsupported NALU type: {}", naluType);
                         return;
                     }
 
-                    // For IDR frames, try to ensure SPS/PPS are available
                     if (naluType == 5) {
                         if (spsHolder[0] == null || ppsHolder[0] == null) {
                             byte[][] cachedNow = com.smartcamera.netty.RtspServerHandler.getSpsPps(cameraId);
@@ -78,18 +95,17 @@ public class StreamController {
                         }
                     }
 
-                    // 如果序列头已就绪，直接写入
                     if (spsHolder[0] != null && ppsHolder[0] != null) {
                         // 首次写入 AVC 序列头
-                        if (bufferHolder[0] != null) {
-                            bufferHolder[0].clear();
-                            bufferHolder[0] = null;
-
+                        if (spsHolder[0] != null && ppsHolder[0] != null) {
                             byte[] seqHeader = flvMuxer.processAvcSequenceHeader(spsHolder[0], ppsHolder[0]);
                             outputStream.write(seqHeader);
                             outputStream.flush();
                             log.info("AVC sequence header written for camera {} (SPS={} PPS={})",
                                     cameraId, spsHolder[0].length, ppsHolder[0].length);
+                            // 标记已写入，避免重复
+                            spsHolder[0] = null;
+                            ppsHolder[0] = null;
                         }
                         // 写入当前帧
                         byte[] flvData = flvMuxer.processNalu(nalu);
@@ -97,33 +113,21 @@ public class StreamController {
                             outputStream.write(flvData);
                             outputStream.flush();
                         }
-                    } else {
-                        // 序列头未就绪，缓冲此帧
-                        bufferHolder[0].add(nalu);
-                        log.debug("Buffering NALU type {} (waiting for SPS/PPS)", naluType);
                     }
                 } catch (IOException e) {
                     log.error("Failed to write FLV data for camera {}", cameraId, e);
                 }
             });
 
-            log.info("Subscribed to frameDistributor for camera {}, id: {}", cameraId, subscriptionId);
-
-            // 2. 写 FLV header
-            outputStream.write(flvMuxer.getFlvHeader());
-            outputStream.write(new byte[]{0, 0, 0, 0}); // PreviousTagSize0
-
-            // 写 onMetaData 脚本标签
-            byte[] metaTag = flvMuxer.getMetaDataTag(640, 480, 30.0);
-            outputStream.write(metaTag);
-            outputStream.flush();
-            log.info("FLV header + onMetaData written for camera {}", cameraId);
+            log.info("Subscribed to frameDistributor for camera {}, video: {}", cameraId, videoSubId);
 
             // 3. 启动 FFmpeg
             if (!ffmpegManager.isAlive(cameraId)) {
                 log.info("Starting FFmpeg for camera: {}", cameraId);
                 try {
-                    ffmpegManager.start(cameraId);
+                    CameraConfig config = cameraConfigRepository.findByCameraId(cameraId)
+                            .orElseThrow(() -> new RuntimeException("Camera not found: " + cameraId));
+                    ffmpegManager.start(config);
                 } catch (Exception e) {
                     log.error("Failed to start FFmpeg for camera {}: {}", cameraId, e.getMessage());
                 }
@@ -131,7 +135,7 @@ public class StreamController {
                 log.info("FFmpeg already running for camera {}", cameraId);
             }
 
-            log.info("Waiting for first NALU from camera {}...", cameraId);
+            log.info("Waiting for frames from camera {}...", cameraId);
 
             // Keep connection alive
             try {
@@ -144,7 +148,7 @@ public class StreamController {
                     }
                 }
             } finally {
-                frameDistributor.unsubscribe(subscriptionId);
+                frameDistributor.unsubscribe(videoSubId);
                 log.info("Unsubscribed from frameDistributor for camera {}", cameraId);
             }
         };

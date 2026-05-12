@@ -71,7 +71,7 @@ function startPreview() {
     ElMessage.warning('请先选择摄像头')
     return
   }
-  streamUrl.value = `/api/v1/streams/${selectedCamera.value}/live.flv`
+  streamUrl.value = `${window.location.origin}/api/v1/streams/${selectedCamera.value}/live.flv`
 }
 
 function stopPreview() {

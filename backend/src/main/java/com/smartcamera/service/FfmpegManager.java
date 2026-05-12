@@ -5,8 +5,8 @@ import com.smartcamera.entity.CameraConfig;
 import com.smartcamera.repository.CameraConfigRepository;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -16,6 +16,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -23,15 +24,26 @@ import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class FfmpegManager {
 
     private final CameraProperties properties;
     private final FfmpegCommandBuilder commandBuilder;
     private final CameraConfigRepository cameraConfigRepository;
+    private final RecordingService recordingService;
+
+    public FfmpegManager(CameraProperties properties,
+                         FfmpegCommandBuilder commandBuilder,
+                         CameraConfigRepository cameraConfigRepository,
+                         @Lazy RecordingService recordingService) {
+        this.properties = properties;
+        this.commandBuilder = commandBuilder;
+        this.cameraConfigRepository = cameraConfigRepository;
+        this.recordingService = recordingService;
+    }
 
     private final Map<String, Process> processes = new ConcurrentHashMap<>();
     private final Map<String, FfmpegProcessContext> contexts = new ConcurrentHashMap<>();
+    private final Set<String> manuallyStopped = ConcurrentHashMap.newKeySet();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private volatile boolean shuttingDown = false;
 
@@ -47,9 +59,25 @@ public class FfmpegManager {
             });
             scheduler.shutdownNow();
         }, "ffmpeg-shutdown-hook"));
+
+        // Auto-start all enabled cameras on application startup
+        List<CameraConfig> enabledCameras = cameraConfigRepository.findByEnabledTrue();
+        if (enabledCameras.isEmpty()) {
+            log.info("No enabled cameras found on startup");
+        } else {
+            log.info("Found {} enabled cameras, auto-starting streams...", enabledCameras.size());
+            for (CameraConfig config : enabledCameras) {
+                try {
+                    start(config);
+                } catch (Exception e) {
+                    log.error("Failed to auto-start camera {}: {}", config.getCameraId(), e.getMessage());
+                }
+            }
+        }
     }
 
-    public synchronized void start(String cameraId) {
+    public synchronized void start(CameraConfig config) {
+        String cameraId = config.getCameraId();
         if (shuttingDown) {
             log.warn("Rejecting start for camera {} — manager is shutting down", cameraId);
             return;
@@ -58,9 +86,6 @@ public class FfmpegManager {
             log.warn("FFmpeg process already running for camera: {}", cameraId);
             return;
         }
-
-        CameraConfig config = cameraConfigRepository.findByCameraId(cameraId)
-                .orElseThrow(() -> new RuntimeException("Camera not found: " + cameraId));
 
         String devicePath = config.getDevicePath() != null ? config.getDevicePath() : commandBuilder.getDevicePath();
         List<String> command = commandBuilder.buildPushCommand(
@@ -94,6 +119,14 @@ public class FfmpegManager {
                     log.warn("FFmpeg process exited for camera {} with code {}", cameraId, exitCode);
                     processes.remove(cameraId);
                     contexts.remove(cameraId);
+
+                    boolean wasManuallyStopped = manuallyStopped.remove(cameraId);
+                    if (wasManuallyStopped) {
+                        log.info("Camera {} was manually stopped, skipping auto-retry", cameraId);
+                        updateCameraStatus(cameraId, "OFFLINE");
+                        return;
+                    }
+
                     updateCameraStatus(cameraId, "OFFLINE");
 
                     // Auto retry
@@ -101,8 +134,11 @@ public class FfmpegManager {
                             && ctx.getRetryCount() < properties.getFfmpeg().getMaxRetry()) {
                         log.info("Retrying FFmpeg for camera {} (attempt {}/{})",
                                 cameraId, ctx.getRetryCount() + 1, properties.getFfmpeg().getMaxRetry());
-                        scheduler.schedule(() -> start(cameraId),
-                                properties.getFfmpeg().getRetryDelaySeconds(), TimeUnit.SECONDS);
+                        CameraConfig retryConfig = cameraConfigRepository.findByCameraId(cameraId).orElse(null);
+                        if (retryConfig != null) {
+                            scheduler.schedule(() -> start(retryConfig),
+                                    properties.getFfmpeg().getRetryDelaySeconds(), TimeUnit.SECONDS);
+                        }
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -112,6 +148,14 @@ public class FfmpegManager {
             monitorThread.start();
 
             updateCameraStatus(cameraId, "ONLINE");
+
+            // Start recording (segment writing to disk)
+            try {
+                recordingService.startRecording(cameraId, config.getResolution());
+            } catch (Exception e) {
+                log.error("Failed to start recording for camera {}: {}", cameraId, e.getMessage(), e);
+            }
+
             log.info("FFmpeg process started for camera: {}", cameraId);
 
         } catch (IOException e) {
@@ -122,6 +166,16 @@ public class FfmpegManager {
     }
 
     public synchronized void stop(String cameraId) {
+        // Mark as manually stopped to prevent auto-retry
+        manuallyStopped.add(cameraId);
+
+        // Stop recording first
+        try {
+            recordingService.stopRecording(cameraId);
+        } catch (Exception e) {
+            log.error("Error stopping recording for camera {}: {}", cameraId, e.getMessage(), e);
+        }
+
         Process process = processes.remove(cameraId);
         FfmpegProcessContext ctx = contexts.remove(cameraId);
 

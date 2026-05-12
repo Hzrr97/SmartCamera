@@ -21,3 +21,16 @@ export function getPlaylist(cameraId, startTime, endTime) {
 export function downloadSegment(segmentId) {
   return request.get(`/api/v1/playback/download/${segmentId}`)
 }
+
+export function playSegment(segmentId) {
+  return request.get(`/api/v1/playback/play/${segmentId}`)
+}
+
+/**
+ * Get the streaming URL for a segment (backend streams MP4 directly).
+ */
+export function getStreamUrl(segmentId) {
+  // Use the full backend URL for the video src
+  const baseURL = request.defaults?.baseURL || ''
+  return `${baseURL}/api/v1/playback/stream/${segmentId}`
+}

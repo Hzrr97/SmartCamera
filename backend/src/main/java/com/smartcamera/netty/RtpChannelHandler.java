@@ -9,32 +9,42 @@ import lombok.extern.slf4j.Slf4j;
 
 /**
  * Handles incoming RTP packets over UDP.
- * Parses RTP payload and distributes H.264 NALUs.
+ * Parses H.264 video NALUs and AAC audio frames, distributes via FrameDistributor.
  */
 @Slf4j
 public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacket> {
 
-    private final String cameraId;
-    private final FrameDistributor frameDistributor;
-
     private static final int RTP_HEADER_SIZE = 12;
 
-    // FU-A reassembly buffer
+    // 视频 payload type (H.264)
+    private static final int PT_VIDEO = 96;
+
+    private final String cameraId;
+    private final FrameDistributor frameDistributor;
+    private int audioPayloadType = 97; // default, updated from SDP
+
+    // H.264 FU-A 重组缓冲区
     private byte[] fuBuffer;
     private int fuWritePos = 0;
+
+    // 音频 RTP 包重组缓冲区
+    private byte[] auBuffer;
+    private int auBufferSize = 0;
+    private boolean auBufferStart = false;
 
     public RtpChannelHandler(String cameraId, FrameDistributor frameDistributor) {
         this.cameraId = cameraId;
         this.frameDistributor = frameDistributor;
+        // 从 SDP 缓存中获取音频 payload type
+        this.audioPayloadType = com.smartcamera.netty.RtspServerHandler.getAudioPayloadType(cameraId);
+        log.debug("RTP handler for camera {} initialized: video PT={}, audio PT={}", cameraId, PT_VIDEO, this.audioPayloadType);
     }
 
     @Override
     protected void channelRead0(ChannelHandlerContext ctx, DatagramPacket packet) {
         ByteBuf buf = packet.content();
-        log.debug("RTP packet received for camera {}: {} bytes", cameraId, buf.readableBytes());
 
         if (buf.readableBytes() < RTP_HEADER_SIZE) {
-            log.warn("RTP packet too small: {} bytes", buf.readableBytes());
             return;
         }
 
@@ -44,7 +54,7 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
 
         int version = (firstByte >> 6) & 0x03;
         if (version != 2) {
-            return; // Not RTP version 2
+            return;
         }
 
         boolean marker = (secondByte & 0x80) != 0;
@@ -72,11 +82,17 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
         byte[] payload = new byte[payloadLength];
         buf.readBytes(payload);
 
-        // Parse H.264 NALUs from RTP payload
-        parseAndDistribute(payload, marker);
+        // 根据 payload type 分发
+        if (payloadType == PT_VIDEO) {
+            parseAndDistributeVideo(payload, marker);
+        } else if (payloadType == audioPayloadType) {
+            parseAndDistributeAudio(payload, marker);
+        }
     }
 
-    private void parseAndDistribute(byte[] payload, boolean marker) {
+    // ==================== H.264 视频解析 ====================
+
+    private void parseAndDistributeVideo(byte[] payload, boolean marker) {
         if (payload.length < 1) {
             return;
         }
@@ -94,17 +110,14 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
             boolean end = (fuHeader & 0x40) != 0;
             int nalTypeFromFu = fuHeader & 0x1F;
 
-            // 实际 NALU 数据长度 = 总长度 - 2（FU indicator + FU header）
             int dataLen = payload.length - 2;
 
             if (start) {
-                // 起始分片：重建 NAL header + 保存第一段数据
                 fuBuffer = new byte[1 + dataLen];
                 fuBuffer[0] = (byte) (nri | nalTypeFromFu);
                 System.arraycopy(payload, 2, fuBuffer, 1, dataLen);
                 fuWritePos = fuBuffer.length;
             } else if (end) {
-                // 末尾分片：追加数据并输出完整 NALU
                 if (fuBuffer == null) return;
                 int totalLen = fuWritePos + dataLen;
                 byte[] nalu = new byte[totalLen + 4];
@@ -115,7 +128,6 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
                 fuBuffer = null;
                 fuWritePos = 0;
             } else {
-                // 中间分片：扩容并追加数据
                 if (fuBuffer == null) return;
                 int needed = fuWritePos + dataLen;
                 if (needed > fuBuffer.length) {
@@ -139,7 +151,6 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
     }
 
     private void parseStapA(byte[] payload) {
-        // First byte is STAP-A NAL header, sub-NALUs start at offset 1
         int offset = 1;
         int count = 0;
         while (offset + 2 < payload.length) {
@@ -149,7 +160,6 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
                 log.warn("STAP-A NALU size {} exceeds remaining payload, skipping", naluSize);
                 break;
             }
-            // Extract sub-NALU and add 4-byte start code
             byte[] withStartCode = new byte[naluSize + 4];
             withStartCode[0] = 0;
             withStartCode[1] = 0;
@@ -160,6 +170,58 @@ public class RtpChannelHandler extends SimpleChannelInboundHandler<DatagramPacke
             offset += naluSize;
             count++;
         }
+    }
+
+    // ==================== AAC 音频解析 ====================
+
+    private void parseAndDistributeAudio(byte[] payload, boolean marker) {
+        if (payload.length < 2) {
+            return;
+        }
+
+        // FFmpeg RTSP 输出使用 AAC-hbr (RFC 3640)
+        // 前两个字节是 AU-headers-length + AU-header
+        // AU-header: 16 bits = AU-size (in bits)
+        int auHeaderLength = ((payload[0] & 0xFF) << 8) | (payload[1] & 0xFF);
+        int auHeadersCount = auHeaderLength / 16;
+
+        int offset = 2 + (auHeadersCount * 2); // skip AU headers
+
+        if (offset >= payload.length) {
+            return;
+        }
+
+        // Extract AAC frame and add ADTS header for standalone playback
+        int aacFrameSize = payload.length - offset;
+        byte[] aacFrame = new byte[aacFrameSize];
+        System.arraycopy(payload, offset, aacFrame, 0, aacFrameSize);
+
+        // Add ADTS header (7 bytes) to make it a standalone AAC frame
+        byte[] aacWithAdts = addAdtsHeader(aacFrame);
+        frameDistributor.distributeAudio(cameraId, aacWithAdts);
+    }
+
+    /**
+     * Add ADTS header to raw AAC frame for standalone playback.
+     * AAC-LC, 44100Hz, mono.
+     */
+    private byte[] addAdtsHeader(byte[] aacFrame) {
+        int frameLength = aacFrame.length + 7; // 7-byte ADTS header
+        byte[] adts = new byte[frameLength];
+
+        // ADTS header (7 bytes)
+        // Syncword: 0xFFF
+        adts[0] = (byte) 0xFF;
+        adts[1] = (byte) 0xF1; // MPEG-4, Layer 0, no CRC
+        // Profile: AAC-LC = 1, Sample rate: 44100Hz = 4, Channels: 1
+        adts[2] = (byte) 0x4C; // (profile-1)<<6 | (sample_rate_idx)<<2 | (channels>>2)
+        adts[3] = (byte) 0x80; // (channels&3)<<6 | (frame_length>>11)
+        adts[4] = (byte) ((frameLength >> 3) & 0xFF);
+        adts[5] = (byte) (((frameLength & 0x7) << 5) | 0x1F);
+        adts[6] = (byte) 0xFC; // 0x1F | (num_aac_frames-1)<<2
+
+        System.arraycopy(aacFrame, 0, adts, 7, aacFrame.length);
+        return adts;
     }
 
     @Override

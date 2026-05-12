@@ -3,6 +3,7 @@ package com.smartcamera.service;
 import com.smartcamera.config.MinioConfig;
 import com.smartcamera.entity.VideoSegment;
 import com.smartcamera.repository.VideoSegmentRepository;
+import io.minio.GetObjectArgs;
 import io.minio.GetPresignedObjectUrlArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
@@ -13,7 +14,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
 import java.io.FileInputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -30,8 +34,13 @@ public class StorageService {
     private final MinioConfig minioConfig;
     private final VideoSegmentRepository segmentRepository;
 
+    public MinioClient getMinioClient() {
+        return minioClient;
+    }
+
     /**
-     * Upload a TS segment file to MinIO and record metadata.
+     * Upload a segment file to MinIO and record metadata.
+     * Supports .h264 format.
      */
     @Async
     public void uploadSegment(String cameraId, Path localFilePath,
@@ -40,7 +49,10 @@ public class StorageService {
         try {
             String dateStr = startTime.toLocalDate().toString().replace("-", "");
             String timeStr = startTime.toLocalTime().toString().replace(":", "");
-            String objectName = cameraId + "/" + dateStr + "/" + timeStr + ".ts";
+            String fileName = localFilePath.getFileName().toString();
+            String extension = fileName.contains(".") ? fileName.substring(fileName.lastIndexOf('.') + 1) : "h264";
+
+            String objectName = cameraId + "/" + dateStr + "/" + timeStr + "." + extension;
 
             long fileSize = Files.size(localFilePath);
 
@@ -50,7 +62,7 @@ public class StorageService {
                                 .bucket(minioConfig.getBucket())
                                 .object(objectName)
                                 .stream(fis, fileSize, -1)
-                                .contentType("video/MP2T")
+                                .contentType("application/octet-stream")
                                 .build());
             }
 
@@ -68,13 +80,44 @@ public class StorageService {
             segment.setExpiredAt(endTime.plusDays(minioConfig.getBucket().equals("streams") ? 30 : 0));
             segmentRepository.save(segment);
 
-            log.info("Segment uploaded to MinIO: {} ({} bytes)", objectName, fileSize);
+            log.info("Segment uploaded to MinIO: {} ({} bytes, format: {})", objectName, fileSize, extension);
 
             // Clean up local temp file
             Files.deleteIfExists(localFilePath);
 
         } catch (Exception e) {
             log.error("Failed to upload segment to MinIO: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Upload a merged playback MP4 file to MinIO and return its presigned URL.
+     */
+    public String uploadPlayback(String cameraId, Path localFilePath, String outputFileName) {
+        try {
+            String objectName = "playback/" + cameraId + "/" + outputFileName;
+            long fileSize = Files.size(localFilePath);
+
+            try (FileInputStream fis = new FileInputStream(localFilePath.toFile())) {
+                minioClient.putObject(
+                        PutObjectArgs.builder()
+                                .bucket(minioConfig.getBucket())
+                                .object(objectName)
+                                .stream(fis, fileSize, -1)
+                                .contentType("video/mp4")
+                                .build());
+            }
+
+            String url = getSegmentUrl(objectName, 120);
+            log.info("Playback MP4 uploaded to MinIO: {} ({} bytes)", objectName, fileSize);
+
+            // Clean up temp file
+            Files.deleteIfExists(localFilePath);
+
+            return url;
+        } catch (Exception e) {
+            log.error("Failed to upload playback MP4: {}", e.getMessage(), e);
+            throw new RuntimeException("Failed to upload playback file", e);
         }
     }
 

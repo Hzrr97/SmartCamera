@@ -57,8 +57,22 @@ public class FrameDistributor {
 
         for (FrameSubscriber sub : subs) {
             if (!sub.offer(nalu)) {
-                // Slow consumer - drop frame
                 log.debug("Dropped frame for slow subscriber on camera {}", cameraId);
+            }
+        }
+    }
+
+    /**
+     * Distribute an audio frame to all subscribers of a camera.
+     * Audio frames are tagged and routed alongside video frames.
+     */
+    public void distributeAudio(String cameraId, byte[] audioFrame) {
+        List<FrameSubscriber> subs = subscribers.get(cameraId);
+        if (subs == null) return;
+
+        for (FrameSubscriber sub : subs) {
+            if (!sub.offer(audioFrame)) {
+                log.debug("Dropped audio frame for slow subscriber on camera {}", cameraId);
             }
         }
     }

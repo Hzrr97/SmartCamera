@@ -12,6 +12,8 @@ camera:
     device:
       linux: /dev/video0
       windows: "USB Camera"
+  stream:
+    segment-duration-minutes: 1
 
 minio:
   endpoint: http://localhost:9000

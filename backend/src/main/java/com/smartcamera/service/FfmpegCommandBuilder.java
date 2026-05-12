@@ -56,6 +56,10 @@ public class FfmpegCommandBuilder {
         // 禁用 sliced_threads 确保每帧只产生一个 NALU，避免 MSE 解码器花屏
         command.addAll(List.of("-x264-params", "sliced_threads=0"));
 
+        // 关键帧间隔：每 0.5 秒一个 I 帧，直播流畅
+        command.addAll(List.of("-g", String.valueOf(Math.max(1, fr / 2))));
+        command.addAll(List.of("-keyint_min", String.valueOf(Math.max(1, fr / 2))));
+
         command.addAll(List.of("-b:v", bitrate + "k"));
         command.addAll(List.of("-maxrate", bitrate + "k"));
         command.addAll(List.of("-bufsize", (bitrate * 2) + "k"));

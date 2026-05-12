@@ -32,7 +32,18 @@
         <span>18:00</span>
         <span>23:59</span>
       </div>
-      <div class="timeline-bar" ref="timelineRef" @click="onTimelineClick">
+      <div
+        class="timeline-bar"
+        ref="timelineRef"
+        @mousedown="onMouseDown"
+        @mousemove="onMouseMove"
+        @mouseleave="onMouseLeave"
+      >
+        <!-- 实时悬浮时间指示器 -->
+        <div class="timeline-hover-indicator" v-if="hoverTime" :style="hoverIndicatorStyle">
+          <div class="timeline-hover-time">{{ hoverTime }}</div>
+        </div>
+
         <div
           v-for="(seg, idx) in segments"
           :key="idx"
@@ -43,9 +54,12 @@
           }"
           :title="formatTime(seg.startTime) + ' - ' + formatTime(seg.endTime)"
         />
-      </div>
-      <div class="timeline-selection" v-if="timeRange" :style="selectionStyle">
-        {{ timeRange.start }} ~ {{ timeRange.end }}
+        <div class="timeline-selection" v-if="timeRange" :style="selectionStyle">
+          <!-- {{ timeRange.start }} ~ {{ timeRange.end }} -->
+        </div>
+        <div class="timeline-drag-preview" v-if="isDragging" :style="dragPreviewStyle">
+          <!-- {{ dragPreviewStart }} ~ {{ dragPreviewEnd }} -->
+        </div>
       </div>
     </div>
 
@@ -93,9 +107,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { listCameras } from '@/api/camera'
-import { querySegments, getMergeUrl } from '@/api/playback'
+import { querySegments, getMergeUrl, getStreamUrl } from '@/api/playback'
 import { formatBytes, formatDate } from '@/utils/format'
 import { ElMessage } from 'element-plus'
 
@@ -107,6 +121,11 @@ const playbackUrl = ref('')
 const timeRange = ref(null)
 const videoRef = ref(null)
 const timelineRef = ref(null)
+const isDragging = ref(false)
+const dragStartPercent = ref(0)
+const dragCurrentPercent = ref(0)
+const hoverPercent = ref(0)
+const hoverTime = ref('')
 
 onMounted(async () => {
   try {
@@ -117,6 +136,12 @@ onMounted(async () => {
   } catch (e) {
     ElMessage.error('加载摄像头列表失败')
   }
+
+  window.addEventListener('mouseup', onMouseUp)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('mouseup', onMouseUp)
 })
 
 async function searchSegments() {
@@ -136,24 +161,106 @@ async function searchSegments() {
   }
 }
 
-function onTimelineClick(event) {
+function getPercentFromEvent(event) {
   const rect = timelineRef.value.getBoundingClientRect()
-  const percent = ((event.clientX - rect.left) / rect.width) * 100
+  const percent = Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100))
+  return percent
+}
 
-  // Convert percent to time
-  const totalMinutes = (percent / 100) * 24 * 60
-  const hours = Math.floor(totalMinutes / 60)
-  const mins = Math.floor(totalMinutes % 60)
-  const timeStr = `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:00`
+function percentToTimeStr(percent) {
+  const totalSeconds = Math.floor((percent / 100) * 24 * 60 * 60)
+  // 最大值限制为 23:59:59
+  const clamped = Math.min(totalSeconds, 23 * 3600 + 59 * 60 + 59)
+  const hours = Math.floor(clamped / 3600)
+  const mins = Math.floor((clamped % 3600) / 60)
+  const secs = clamped % 60
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+}
 
-  timeRange.value = { start: timeStr, end: timeStr }
+function onMouseDown(event) {
+  const percent = getPercentFromEvent(event)
+  isDragging.value = true
+  dragStartPercent.value = percent
+  dragCurrentPercent.value = percent
+  timeRange.value = null // 立即清除上次选区
+}
+
+function onMouseMove(event) {
+  const percent = getPercentFromEvent(event)
+  hoverPercent.value = percent
+  hoverTime.value = percentToTimeStr(percent)
+
+  // 拖拽中实时更新选区
+  if (isDragging.value) {
+    dragCurrentPercent.value = percent
+  }
+}
+
+function onMouseLeave() {
+  hoverTime.value = ''
+  hoverPercent.value = 0
+}
+
+function onMouseUp(event) {
+  if (!isDragging.value) return
+  isDragging.value = false
+  const endPercent = getPercentFromEvent(event)
+
+  const start = Math.min(dragStartPercent.value, endPercent)
+  const end = Math.max(dragStartPercent.value, endPercent)
+  if (end - start < 0.5) {
+    timeRange.value = null
+  } else {
+    timeRange.value = {
+      start: percentToTimeStr(start),
+      end: percentToTimeStr(end)
+    }
+  }
 }
 
 const selectionStyle = computed(() => {
   if (!timeRange.value) return {}
-  const startMinutes = parseTimeToMinutes(timeRange.value.start)
-  const percent = (startMinutes / (24 * 60)) * 100
-  return { left: percent + '%', width: '2px', background: '#409EFF' }
+  const startPercent = (parseTimeToMinutes(timeRange.value.start) / (24 * 60)) * 100
+  const endPercent = (parseTimeToMinutes(timeRange.value.end) / (24 * 60)) * 100
+  const left = Math.min(startPercent, endPercent)
+  const width = Math.abs(endPercent - startPercent)
+  return {
+    left: left + '%',
+    width: width + '%',
+    background: 'rgba(64, 158, 255, 0.3)',
+    borderRadius: '2px'
+  }
+})
+
+const hoverIndicatorStyle = computed(() => {
+  if (!hoverTime.value) return {}
+  return {
+    left: hoverPercent.value + '%'
+  }
+})
+
+const dragPreviewStyle = computed(() => {
+  if (!isDragging.value) return {}
+  const start = Math.min(dragStartPercent.value, dragCurrentPercent.value)
+  const width = Math.abs(dragCurrentPercent.value - dragStartPercent.value)
+  return {
+    left: start + '%',
+    width: width + '%',
+    background: 'rgba(64, 158, 255, 0.3)',
+    borderRadius: '2px'
+  }
+})
+
+const dragPreviewStart = computed(() => {
+  if (!isDragging.value) return ''
+  const start = Math.min(dragStartPercent.value, dragCurrentPercent.value)
+  return percentToTimeStr(start)
+})
+
+const dragPreviewEnd = computed(() => {
+  if (!isDragging.value) return ''
+  const end = Math.max(dragStartPercent.value, dragCurrentPercent.value)
+  return percentToTimeStr(end)
 })
 
 async function playSelected() {
@@ -172,7 +279,7 @@ async function playSelected() {
 }
 
 async function playSegment(row) {
-  playbackUrl.value = row.downloadUrl
+  playbackUrl.value = getStreamUrl(row.id)
 }
 
 function downloadSelected() {
@@ -230,7 +337,8 @@ function formatDuration(ms) {
   background: #ebeef5;
   border-radius: 4px;
   position: relative;
-  cursor: pointer;
+  cursor: crosshair;
+  user-select: none;
 }
 
 .timeline-segment {
@@ -248,12 +356,63 @@ function formatDuration(ms) {
 .timeline-selection {
   position: absolute;
   top: 0;
-  height: 32px;
+  height: 100%;
   color: #409EFF;
   font-size: 11px;
   display: flex;
   align-items: center;
-  padding-left: 4px;
+  padding-left: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-drag-preview {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  color: #409EFF;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-hover-indicator {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+}
+
+.timeline-hover-indicator::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  height: 100%;
+  background: #409EFF;
+}
+
+.timeline-hover-time {
+  position: absolute;
+  top: -24px;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 .playback-actions {
